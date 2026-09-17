@@ -1,6 +1,7 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const path = require('path');
+const rootsProductService = require('./rootsProductService');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 class SearchService {
@@ -10,9 +11,58 @@ class SearchService {
   }
 
   /**
-   * Fast & reliable live web search using DuckDuckGo Lite
+   * Cleans raw product titles from Excel/Sheets by removing technical weights,
+   * package units, and excessive punctuation to produce a high-hit-rate search query.
    */
-  async searchDuckDuckGoLite(query, maxResults = 6) {
+  cleanSearchQuery(rawName, brand = '') {
+    if (!rawName) return '';
+    let q = rawName
+      .replace(/\(.*?\)/g, ' ')
+      .replace(/\[.*?\]/g, ' ')
+      .replace(/\b\d+(\.\d+)?\s*(g|kg|ml|l|oz|gói|hop|chai|lon|viên)\b/gi, ' ')
+      .replace(/\b\d+\s*gói\b/gi, ' ')
+      .replace(/[,;:\-\/\|]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // If brand is known and not present in query, append for precision
+    if (brand && !q.toLowerCase().includes(brand.toLowerCase())) {
+      q = `${q} ${brand}`;
+    }
+    return q.trim();
+  }
+
+  /**
+   * Search official Wikipedia (Encyclopedia knowledge for categories, ingredients, history)
+   * 100% Free, high-speed, never blocked, zero hallucination.
+   */
+  async searchWikipedia(query, limit = 3) {
+    if (!query || !query.trim()) return [];
+    try {
+      const url = `https://vi.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&limit=${limit}`;
+      const res = await axios.get(url, {
+        headers: {
+          'User-Agent': 'RootsSEOAutomation/1.0 (https://roots.vn; contact@roots.vn)'
+        },
+        timeout: 6000
+      });
+
+      const items = res.data?.query?.search || [];
+      return items.map(it => ({
+        title: it.title,
+        link: `https://vi.wikipedia.org/wiki/${encodeURIComponent(it.title.replace(/ /g, '_'))}`,
+        snippet: (it.snippet || '').replace(/<[^>]+>/g, ''),
+        source: 'Wikipedia Bách Khoa Toàn Thư'
+      }));
+    } catch (err) {
+      return [];
+    }
+  }
+
+  /**
+   * Live Web Search via DuckDuckGo Lite
+   */
+  async searchDuckDuckGoLite(query, maxResults = 5) {
     try {
       const res = await axios.post('https://lite.duckduckgo.com/lite/', 'q=' + encodeURIComponent(query), {
         headers: {
@@ -21,7 +71,7 @@ class SearchService {
           'Accept': 'text/html,application/xhtml+xml',
           'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7'
         },
-        timeout: 9000
+        timeout: 8000
       });
 
       const $ = cheerio.load(res.data);
@@ -41,7 +91,6 @@ class SearchService {
           }
         }
 
-        // Get snippet from following td.result-snippet if exists
         const parentTr = $(el).closest('tr');
         const snippetTr = parentTr.next('tr');
         const snippet = snippetTr.find('.result-snippet').text().trim();
@@ -58,13 +107,12 @@ class SearchService {
 
       return results;
     } catch (err) {
-      console.warn(`[SearchService] DDG Lite search error: ${err.message}`);
       return [];
     }
   }
 
   /**
-   * Serper Google Search (if API keys available)
+   * Serper Google Search (if API keys available and active)
    */
   async searchSerper(query, maxResults = 5) {
     if (this.serperKeys.length === 0) return [];
@@ -105,8 +153,7 @@ class SearchService {
   }
 
   /**
-   * Jina Reader: 100% Free Full-Page Scraper & Markdown Converter
-   * Extracts the full text, ingredients, specifications, and genuine review notes
+   * Jina Reader: Full-Page Scraper & Markdown Converter
    */
   async scrapeWebpageContent(url, maxChars = 12000) {
     if (!url || !url.startsWith('http')) return '';
@@ -122,7 +169,6 @@ class SearchService {
       });
 
       if (typeof res.data === 'string') {
-        // Clean out excessive whitespace
         let cleaned = res.data.replace(/\n{3,}/g, '\n\n').trim();
         return cleaned.slice(0, maxChars);
       }
@@ -134,25 +180,91 @@ class SearchService {
 
   /**
    * Deep Multi-Source Grounding Context Gathering
-   * 1. Multi-query search across web
-   * 2. Scrapes full text from top 2-3 authoritative sources (official producer, encyclopedic, review)
+   * 1. Sheet Packaging Specs (100% genuine ingredients, storage, usage)
+   * 2. Live Store Product Scraping (ROOTS.VN real prices, packaging, descriptions)
+   * 3. Wikipedia Encyclopedia (Nutritional science, origins, culinary background)
+   * 4. Multi-query web search
    */
-  async gatherGroundingContext(productName, category = '', keywords = '', onProgress = () => {}) {
-    const queries = [
-      `${productName} chính hãng nhà sản xuất`,
-      `${productName} review đánh giá chất lượng thực tế`,
-      `${productName} ${category} thành phần công dụng quy trình sản xuất`
-    ];
-
+  async gatherGroundingContext({
+    productName,
+    category = '',
+    brand = '',
+    ingredients = '',
+    storage = '',
+    usage = '',
+    code = '',
+    onProgress = () => {}
+  }) {
     const allResults = [];
     const seenLinks = new Set();
+    const deepScrapedContents = [];
 
-    onProgress({ step: 0, status: 'searching', message: `Đang quét tìm kiếm nguồn dữ liệu xác thực cho "${productName}"...` });
+    const cleanName = this.cleanSearchQuery(productName, brand);
 
-    for (const q of queries) {
-      let items = await this.searchSerper(q, 4);
+    onProgress({
+      step: 0,
+      status: 'searching',
+      message: `Đang quét dữ liệu xác thực từ ROOTS.VN, Wikipedia và bao bì chính hãng...`
+    });
+
+    // 1. Check live ROOTS.VN product catalog
+    try {
+      const rootsProducts = await rootsProductService.searchRoots(cleanName || productName);
+      if (rootsProducts && rootsProducts.length > 0) {
+        const topRoots = rootsProducts[0];
+        allResults.push({
+          title: `[ROOTS.VN] ${topRoots.name}`,
+          link: topRoots.url,
+          snippet: `Giá bán niêm yết: ${topRoots.price} | Hình ảnh: ${topRoots.image}`,
+          source: 'ROOTS.VN Store Catalog'
+        });
+
+        // Deep scrape official product page
+        onProgress({
+          step: 0,
+          status: 'deep_scraping',
+          message: `Đang trích xuất nội dung sản phẩm trực tiếp từ ROOTS.VN...`
+        });
+
+        const scrapedRoots = await this.scrapeWebpageContent(topRoots.url, 8000);
+        if (scrapedRoots && scrapedRoots.length > 200) {
+          deepScrapedContents.push({
+            title: `ROOTS.VN - ${topRoots.name}`,
+            url: topRoots.url,
+            content: scrapedRoots
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[SearchService] Lỗi quét ROOTS.VN:', e.message);
+    }
+
+    // 2. Wikipedia knowledge search (Category & Key ingredients)
+    try {
+      const wikiTerms = [category, brand, cleanName.split(' ').slice(0, 3).join(' ')].filter(Boolean);
+      for (const term of wikiTerms.slice(0, 2)) {
+        const wikiItems = await this.searchWikipedia(term, 2);
+        for (const item of wikiItems) {
+          if (!seenLinks.has(item.link)) {
+            seenLinks.add(item.link);
+            allResults.push(item);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[SearchService] Lỗi quét Wikipedia:', e.message);
+    }
+
+    // 3. Web Search for product reviews & specs
+    const searchQueries = [
+      `${cleanName} thành phần công dụng`,
+      `${cleanName} review đánh giá`
+    ].filter(Boolean);
+
+    for (const q of searchQueries) {
+      let items = await this.searchSerper(q, 3);
       if (items.length === 0) {
-        items = await this.searchDuckDuckGoLite(q, 4);
+        items = await this.searchDuckDuckGoLite(q, 3);
       }
 
       for (const item of items) {
@@ -161,56 +273,32 @@ class SearchService {
           allResults.push(item);
         }
       }
-      await new Promise(r => setTimeout(r, 200));
     }
 
-    // Filter candidate URLs for deep scraping: prefer producer sites, wiki, or trusted reviews
-    // Avoid social media login pages or empty search redirects
-    const filterCandidateUrls = allResults.filter(r => {
-      const u = r.link.toLowerCase();
-      return !u.includes('facebook.com') &&
-             !u.includes('youtube.com') &&
-             !u.includes('tiktok.com') &&
-             !u.includes('instagram.com') &&
-             !u.includes('shopee.vn') &&
-             !u.includes('lazada.vn');
+    // Build Grounding Dossier
+    let contextText = `=== HỒ SƠ DỮ LIỆU XÁC THỰC CỦA SẢN PHẨM (AUTHENTIC GROUNDING DOSSIER) ===\n\n`;
+
+    // Part 1: Official Packaging Data from Google Sheet
+    contextText += `--- THÔNG SỐ CHÍNH HÃNG TỪ BAO BÌ NHÀ SẢN XUẤT (GOOGLE SHEET) ---\n`;
+    contextText += `- Tên sản phẩm đầy đủ: ${productName}\n`;
+    if (brand) contextText += `- Thương hiệu: ${brand}\n`;
+    if (code) contextText += `- Mã barcode/SKU: ${code}\n`;
+    if (ingredients) contextText += `- Thành phần công bố chính thức: ${ingredients}\n`;
+    if (storage) contextText += `- Hướng dẫn bảo quản từ hãng: ${storage}\n`;
+    if (usage) contextText += `- Hướng dẫn sử dụng: ${usage}\n`;
+    contextText += `\n`;
+
+    // Part 2: Live Store & Wikipedia Overview
+    contextText += `--- CÁC NGUỒN THAM KHẢO XÁC THỰC TRỰC TUYẾN ---\n`;
+    allResults.forEach((r, idx) => {
+      contextText += `[Nguồn ${idx + 1} - ${r.source}]: ${r.title}\nURL: ${r.link}\nTrích dẫn: ${r.snippet}\n\n`;
     });
 
-    const urlsToScrape = filterCandidateUrls.slice(0, 2);
-    const deepScrapedContents = [];
-
-    for (let i = 0; i < urlsToScrape.length; i++) {
-      const item = urlsToScrape[i];
-      onProgress({
-        step: 0,
-        status: 'deep_scraping',
-        message: `Đang trích xuất nội dung gốc từ: ${item.title.slice(0, 40)}...`
-      });
-
-      const fullText = await this.scrapeWebpageContent(item.link);
-      if (fullText && fullText.length > 300) {
-        deepScrapedContents.push({
-          title: item.title,
-          url: item.link,
-          content: fullText
-        });
-      }
-    }
-
-    // Build rich Grounding Dossier
-    let contextText = `=== DỮ LIỆU TÌM KIẾM & NGUỒN XÁC THỰC (AUTHENTIC GROUNDING DOSSIER) ===\n\n`;
-    
-    // Part 1: Organic Search Overview
-    contextText += `--- CÁC KẾT QUẢ TÌM KIẾM TRỰC TUYẾN ---\n`;
-    allResults.slice(0, 6).forEach((r, idx) => {
-      contextText += `[Nguồn ${idx + 1}]: ${r.title}\nURL: ${r.link}\nTrích dẫn tóm tắt: ${r.snippet}\n\n`;
-    });
-
-    // Part 2: Full Scraped Authoritative Webpages
+    // Part 3: Deep Scraped Webpages
     if (deepScrapedContents.length > 0) {
-      contextText += `--- NỘI DUNG CHI TIẾT TRÍCH XUẤT TRỰC TIẾP TỪ TRANG GỐC ---\n`;
+      contextText += `--- NỘI DUNG CHI TIẾT TRÍCH XUẤT TỪ TRANG GỐC ---\n`;
       deepScrapedContents.forEach((sc, idx) => {
-        contextText += `\n[VĂN BẢN GỐC TỪ: ${sc.title} (${sc.url})]:\n${sc.content}\n--- HẾT VĂN BẢN NGUỒN ${idx + 1} ---\n`;
+        contextText += `\n[VĂN BẢN TRANG SẢN PHẨM: ${sc.title} (${sc.url})]:\n${sc.content}\n--- HẾT VĂN BẢN NGUỒN ${idx + 1} ---\n`;
       });
     }
 

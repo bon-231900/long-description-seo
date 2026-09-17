@@ -69,7 +69,17 @@ class Step0Research {
     return JSON.stringify(promptObject, null, 2);
   }
 
-  async execute({ productName, category = '', verifiedKeywordsOverride = '', onProgress = () => {} }) {
+  async execute({
+    productName,
+    category = '',
+    brand = '',
+    ingredients = '',
+    storage = '',
+    usage = '',
+    code = '',
+    verifiedKeywordsOverride = '',
+    onProgress = () => {}
+  }) {
     onProgress({ step: 0, status: 'starting', message: `Bắt đầu Bước 0: Thu thập dữ liệu thực tế cho "${productName}"...` });
 
     const basePrompt = this.buildPrompt({ productName, category, verifiedKeywordsOverride });
@@ -77,19 +87,23 @@ class Step0Research {
     let methodUsed = '';
 
     // Step 0A: Always gather authentic grounding context from live web & authoritative sources
-    const searchContext = await searchService.gatherGroundingContext(
+    const searchContext = await searchService.gatherGroundingContext({
       productName,
       category,
-      verifiedKeywordsOverride,
+      brand,
+      ingredients,
+      storage,
+      usage,
+      code,
       onProgress
-    );
+    });
 
-    const enrichedPrompt = `${basePrompt}\n\n${searchContext.contextText}\n\nCRITICAL INSTRUCTION: Analyze the above authentic web data and deeply scraped pages thoroughly. Extract exact verified facts, genuine review observations, real comparison points, and honest demand signals into the exact required JSON schema.`;
+    const enrichedPrompt = `${basePrompt}\n\n${searchContext.contextText}\n\nCRITICAL INSTRUCTION: Analyze the above authentic web data, official product packaging specs, and deeply scraped pages thoroughly. Extract exact verified facts, genuine review observations, real comparison points, and honest demand signals into the exact required JSON schema.`;
 
     onProgress({
       step: 0,
       status: 'analyzing',
-      message: `Đã thu thập ${searchContext.results.length} nguồn trực tuyến & ${searchContext.deepScrapedCount} trang trích xuất chi tiết. Đang tổng hợp JSON Brief...`
+      message: `Đã thu thập ${searchContext.results.length} nguồn trực tuyến & ${searchContext.deepScrapedCount} trang trích xuất chi tiết (ROOTS.VN + Wikipedia + Bao bì chính hãng). Đang tổng hợp JSON Brief...`
     });
 
     try {

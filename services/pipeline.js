@@ -26,6 +26,10 @@ class Pipeline {
     verifiedKeywordsOverride = '',
     rootsAvailabilityInfo = '',
     brand = '',
+    ingredients = '',
+    storage = '',
+    usage = '',
+    code = '',
     outputDir = path.join(__dirname, '..', 'output'),
     onProgress = () => {}
   }) {
@@ -45,6 +49,11 @@ class Pipeline {
     const step0Res = await step0Research.execute({
       productName: cleanProductName,
       category,
+      brand,
+      ingredients,
+      storage,
+      usage,
+      code,
       verifiedKeywordsOverride,
       onProgress
     });

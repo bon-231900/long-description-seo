@@ -104,6 +104,8 @@ async function runBatch(batchLimit = 10, onRowProgress = () => {}) {
   const colBrand = header.indexOf('Thương hiệu');
   const colCode = header.indexOf('Mã gợi nhớ');
   const colIngredients = header.indexOf('Thành phần sản phẩm');
+  const colStorage = header.indexOf('Hướng dẫn bảo quản');
+  const colUsage = header.indexOf('Hướng dẫn sử dụng');
   let colLongDesc = header.indexOf('Mô tả dài HTML (CMS)');
   let colStatus = header.indexOf('Trạng thái mô tả dài');
 
@@ -146,9 +148,11 @@ async function runBatch(batchLimit = 10, onRowProgress = () => {}) {
       pendingRows.push({
         rowIndex: i + 2, // 1-based index in Sheet (row 1 is header)
         name,
-        brand: row[colBrand] || '',
-        code: row[colCode] || '',
-        ingredients: row[colIngredients] || ''
+        brand: (colBrand !== -1 ? row[colBrand] : '') || '',
+        code: (colCode !== -1 ? row[colCode] : '') || '',
+        ingredients: (colIngredients !== -1 ? row[colIngredients] : '') || '',
+        storage: (colStorage !== -1 ? row[colStorage] : '') || '',
+        usage: (colUsage !== -1 ? row[colUsage] : '') || '',
       });
       if (pendingRows.length >= batchLimit) break;
     }
@@ -168,6 +172,9 @@ async function runBatch(batchLimit = 10, onRowProgress = () => {}) {
     const item = pendingRows[idx];
     console.log(`\n---------------------------------------------------------------`);
     console.log(`[${idx + 1}/${pendingRows.length}] Đang xử lý Dòng ${item.rowIndex}: "${item.name}" (Brand: ${item.brand || 'ROOTS'})`);
+    if (item.ingredients) {
+      console.log(`   [Bao bì gốc] Thành phần: ${item.ingredients.slice(0, 80)}...`);
+    }
     console.log(`---------------------------------------------------------------`);
 
     // Mark as Processing in Sheet
@@ -182,6 +189,10 @@ async function runBatch(batchLimit = 10, onRowProgress = () => {}) {
       const res = await pipeline.runFullWorkflow({
         productName: item.name,
         brand: item.brand,
+        code: item.code,
+        ingredients: item.ingredients,
+        storage: item.storage,
+        usage: item.usage,
         onProgress: (evt) => {
           console.log(`   [B${evt.step}] ${evt.message}`);
           onRowProgress({ item, evt });
