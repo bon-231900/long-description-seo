@@ -242,13 +242,13 @@ NON-NEGOTIABLE MODULES (structural, exempt from the evidence gate):
     onProgress({ step: 1, status: 'starting', message: `Bắt đầu Bước 1: Prompt Architect - Thiết kế dàn bài và sinh Writer Prompt...` });
 
     const prompt = this.buildPrompt({ productName, researchBrief, rootsAvailabilityInfo });
-    const res = await geminiService.generate({
+    const res = await geminiService.generateJson({
       prompt,
-      isJson: true,
-      temperature: 0.3
+      temperature: 0.2,
+      retries: 2
     });
 
-    const writerPromptJson = geminiService.safeJsonParse(res.text);
+    const writerPromptJson = res.data;
     onProgress({ step: 1, status: 'success', message: 'Thiết kế dàn bài may đo và lắp ráp Writer Prompt thành công!' });
 
     return {

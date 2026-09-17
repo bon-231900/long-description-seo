@@ -1,11 +1,12 @@
 const axios = require('axios');
 const path = require('path');
+const { jsonrepair } = require('jsonrepair');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 /**
  * Gemini Service for Generation 3.x+ Models Only
  * Strict Policy: Only gemini-3.5-flash-lite, gemini-3.6-flash, gemini-3.5-flash, gemini-3.7-flash, gemini-3.8-flash
- * Multi-Key Rotation + Intelligent Model Fallback
+ * Multi-Key Rotation + Intelligent Model Fallback + Auto JSON Repair
  */
 class GeminiService {
   constructor() {
@@ -47,32 +48,101 @@ class GeminiService {
   cleanJsonString(raw) {
     if (!raw) return '{}';
     let str = raw.trim();
-    if (str.startsWith('```json')) {
-      str = str.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    } else if (str.startsWith('```')) {
-      str = str.replace(/^```\s*/, '').replace(/\s*```$/, '');
-    }
+
+    // 1. Strip markdown fences
+    str = str.replace(/^```json\s*/i, '').replace(/^```\s*/i, '');
+    str = str.replace(/\s*```$/i, '').trim();
+
+    // 2. Balanced brace extractor to find exact boundaries of root object/array
     const firstBrace = str.indexOf('{');
-    const lastBrace = str.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      str = str.slice(firstBrace, lastBrace + 1);
+    const firstBracket = str.indexOf('[');
+
+    let startIdx = -1;
+    let isObject = true;
+
+    if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+      startIdx = firstBrace;
+      isObject = true;
+    } else if (firstBracket !== -1) {
+      startIdx = firstBracket;
+      isObject = false;
     }
-    return str.trim();
+
+    if (startIdx === -1) {
+      return str.trim();
+    }
+
+    const openChar = isObject ? '{' : '[';
+    const closeChar = isObject ? '}' : ']';
+
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+    let endIdx = -1;
+
+    for (let i = startIdx; i < str.length; i++) {
+      const char = str[i];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString) {
+        if (char === openChar) {
+          depth++;
+        } else if (char === closeChar) {
+          depth--;
+          if (depth === 0) {
+            endIdx = i;
+            break;
+          }
+        }
+      }
+    }
+
+    if (endIdx !== -1) {
+      return str.slice(startIdx, endIdx + 1).trim();
+    }
+
+    return str.slice(startIdx).trim();
   }
 
   safeJsonParse(raw) {
+    if (typeof raw === 'object' && raw !== null) return raw;
     const cleaned = this.cleanJsonString(raw);
+
+    // Layer 1: Native parse
     try {
       return JSON.parse(cleaned);
-    } catch (err) {
+    } catch (err1) {
+      // Layer 2: jsonrepair (auto-fixes unescaped quotes, trailing commas, minus signs, comments)
       try {
-        const sanitized = cleaned
-          .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
-          .replace(/,\s*([\]}])/g, '$1');
-        return JSON.parse(sanitized);
-      } catch (e) {
-        console.error('[Gemini 3.x Engine] Parse JSON thất bại. Snippet:', cleaned.slice(0, 300));
-        throw new Error('Dữ liệu AI trả về không thể parse thành JSON: ' + err.message);
+        const repaired = jsonrepair(cleaned);
+        return JSON.parse(repaired);
+      } catch (err2) {
+        // Layer 3: Clean control characters and retry jsonrepair
+        try {
+          const sanitized = cleaned
+            .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+            .replace(/,\s*([\]}])/g, '$1');
+          const repaired2 = jsonrepair(sanitized);
+          return JSON.parse(repaired2);
+        } catch (err3) {
+          console.error('[Gemini 3.x Engine] Parse JSON thất bại sau các bước tự sửa chữa. Lỗi:', err1.message);
+          console.error('[Gemini 3.x Engine] Đoạn dữ liệu lỗi:', cleaned.slice(0, 300));
+          throw new Error('Dữ liệu AI trả về không thể parse thành JSON: ' + err1.message);
+        }
       }
     }
   }
@@ -183,6 +253,49 @@ class GeminiService {
 
     const finalMsg = lastError?.response?.data?.error?.message || lastError?.message || 'Tất cả model Gemini 3.x đều bận hoặc hết hạn ngạch.';
     throw new Error(`Gemini 3.x Error: ${finalMsg}`);
+  }
+
+  async generateJson({
+    prompt,
+    systemInstruction = '',
+    model = null,
+    temperature = 0.2,
+    maxTokens = 8192,
+    retries = 2
+  }) {
+    let currentPrompt = prompt;
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await this.generate({
+          prompt: currentPrompt,
+          systemInstruction,
+          isJson: true,
+          model,
+          temperature: attempt === 0 ? temperature : 0.1,
+          maxTokens
+        });
+
+        const parsed = this.safeJsonParse(res.text);
+        return {
+          data: parsed,
+          text: res.text,
+          modelUsed: res.modelUsed
+        };
+      } catch (err) {
+        lastError = err;
+        console.warn(`[Gemini 3.x Engine] Parse JSON thất bại (thử lần ${attempt + 1}/${retries + 1}): ${err.message}`);
+
+        if (attempt < retries) {
+          currentPrompt = `${prompt}\n\n[LƯU Ý CỰC KỲ QUAN TRỌNG VỀ ĐỊNH DẠNG: Lần tạo trước bị lỗi cú pháp JSON: "${err.message}". Vui lòng chỉ trả về DUY NHẤT 1 chuỗi JSON hợp lệ 100%, không kèm bất kỳ giải thích, markdown hay ký tự thừa nào bên ngoài. Đảm bảo escape toàn bộ dấu ngoặc kép bên trong nội dung văn bản (\\") và không dùng dấu gạch đầu dòng '-' không bọc trong chuỗi string.]`;
+          this.rotateKey();
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+    }
+
+    throw lastError;
   }
 }
 

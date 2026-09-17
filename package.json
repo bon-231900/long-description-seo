@@ -12,6 +12,7 @@
     "cheerio": "^1.0.0",
     "dotenv": "^16.4.7",
     "googleapis": "^181.0.0",
+    "jsonrepair": "^3.15.0",
     "marked": "^18.0.13"
   },
   "keywords": [
