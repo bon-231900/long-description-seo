@@ -41,5 +41,5 @@ jobs:
           GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           SERPER_API_KEYS: ${{ secrets.SERPER_API_KEYS }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
-          SHEET_NAME: ${{ secrets.SHEET_NAME || 'Trang tính1' }}
+          SHEET_NAME: ${{ secrets.SHEET_NAME }}
         run: node sheets-runner.js --batch ${{ inputs.batch_size || 15 }}

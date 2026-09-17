@@ -72,13 +72,21 @@ function getSheetsClient() {
 
 async function runBatch(batchLimit = 10, onRowProgress = () => {}) {
   const sheetId = DEFAULT_SHEET_ID;
-  const tabName = DEFAULT_SHEET_NAME;
-
   if (!sheetId) {
     throw new Error('Chưa cấu hình SHEET_ID! Vui lòng cấu hình biến môi trường SHEET_ID trong file .env hoặc GitHub Secrets.');
   }
-
   const sheets = getSheetsClient();
+
+  let tabName = process.env.SHEET_NAME;
+  if (!tabName) {
+    try {
+      const meta = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+      tabName = meta.data.sheets?.[0]?.properties?.title || 'Trang tính1';
+      console.log(`[Google Sheets] Tự động chọn tab đầu tiên: "${tabName}"`);
+    } catch (e) {
+      tabName = 'Trang tính1';
+    }
+  }
 
   console.log(`\n===============================================================`);
   console.log(`  ROOTS SEO - ĐANG KẾT NỐI GOOGLE SHEET: ${sheetId}`);
