@@ -1,0 +1,45 @@
+name: Long Description SEO Cloud Runner 24/7
+
+on:
+  # Chạy tự động định kỳ mỗi 30 phút trên GitHub Cloud (kể cả khi bạn tắt máy tính)
+  schedule:
+    - cron: '*/30 * * * *'
+
+  # Bấm nút chạy thủ công bất cứ lúc nào trên giao diện GitHub Actions
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Số lượng sản phẩm xử lý mỗi đợt'
+        required: false
+        default: '15'
+        type: string
+
+concurrency:
+  group: long-description-seo-runner
+  cancel-in-progress: false
+
+jobs:
+  seo-long-description:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Dependencies
+        run: npm install --no-package-lock --no-audit
+
+      - name: Execute Long Description Pipeline
+        env:
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          SERPER_API_KEYS: ${{ secrets.SERPER_API_KEYS }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          SHEET_NAME: ${{ secrets.SHEET_NAME || 'Trang tính1' }}
+        run: node sheets-runner.js --batch ${{ inputs.batch_size || 15 }}

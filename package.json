@@ -1,0 +1,30 @@
+{
+  "name": "long-description-seo",
+  "version": "1.0.0",
+  "description": "Autonomous Multi-Agent E-Commerce Long-Form SEO Guide Generator & Google Sheets 24/7 Cloud Automation (Gemini 3.x+)",
+  "main": "sheets-runner.js",
+  "scripts": {
+    "start": "node sheets-runner.js",
+    "cli": "node cli.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.4.7",
+    "googleapis": "^181.0.0",
+    "marked": "^18.0.13"
+  },
+  "keywords": [
+    "seo",
+    "gemini",
+    "long-description",
+    "ecommerce",
+    "multi-agent",
+    "google-sheets",
+    "github-actions",
+    "aeo",
+    "geo"
+  ],
+  "author": "bon-231900",
+  "license": "MIT"
+}
